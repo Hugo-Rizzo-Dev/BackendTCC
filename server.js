@@ -8,8 +8,8 @@ const multer = require("multer");
 const exifr = require("exifr");
 const nodemailer = require("nodemailer");
 const { v4: uuidv4 } = require("uuid");
-const { poolPromise, sql } = require("./src/db");
-const { gerarDescricaoIA } = require("./src/gemini");
+const { poolPromise, sql } = require("./db");
+const { gerarDescricaoIA } = require("./gemini");
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 
