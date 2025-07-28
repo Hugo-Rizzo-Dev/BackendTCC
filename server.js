@@ -391,7 +391,11 @@ app.get("/posts", async (req, res) => {
 // Rota para o autor do post iniciar uma votação
 app.post("/posts/:postId/iniciar-votacao", checkAuth, async (req, res) => {
   const { postId } = req.params;
-  const { userId } = req;
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ message: "ID do usuário não fornecido." });
+  }
 
   try {
     const pool = await poolPromise;
@@ -405,7 +409,7 @@ app.post("/posts/:postId/iniciar-votacao", checkAuth, async (req, res) => {
 
     const post = postResult.recordset[0];
 
-    if (!post || post.usuarioId !== userId) {
+    if (!post || post.usuarioId.toLowerCase() !== userId.toLowerCase()) {
       return res
         .status(403)
         .json({ message: "Apenas o autor pode iniciar uma votação." });
