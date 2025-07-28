@@ -874,8 +874,10 @@ ${reason}
 // middlewares
 async function adminOnly(req, res, next) {
   try {
-    if (!req.userId)
+    // A única mudança real é garantir que estamos usando req.userId
+    if (!req.userId) {
       return res.status(401).json({ message: "Usuário não autenticado." });
+    }
 
     const pool = await poolPromise;
     const { recordset } = await pool
@@ -889,10 +891,10 @@ async function adminOnly(req, res, next) {
         .json({ message: "Acesso negado. Apenas administradores." });
     }
 
-    next();
+    next(); // Se chegou até aqui, o usuário é admin e pode prosseguir
   } catch (err) {
-    console.error("adminOnly:", err);
-    res.status(500).send("erro interno");
+    console.error("adminOnly middleware error:", err);
+    res.status(500).json({ message: "Erro interno no servidor." });
   }
 }
 
