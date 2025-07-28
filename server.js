@@ -874,7 +874,8 @@ ${reason}
 // middlewares
 async function adminOnly(req, res, next) {
   try {
-    if (!req.userId) return res.status(401).send("não autenticado");
+    if (!req.userId)
+      return res.status(401).json({ message: "Usuário não autenticado." });
 
     const pool = await poolPromise;
     const { recordset } = await pool
@@ -883,7 +884,9 @@ async function adminOnly(req, res, next) {
       .query("SELECT isAdmin FROM dbo.Usuarios WHERE id = @id");
 
     if (!recordset[0]?.isAdmin) {
-      return res.status(403).send("apenas administradores");
+      return res
+        .status(403)
+        .json({ message: "Acesso negado. Apenas administradores." });
     }
 
     next();
