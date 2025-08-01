@@ -19,7 +19,6 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(checkAuth);
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.get("/", (_, res) => res.send("API TCC - ok"));
@@ -356,6 +355,8 @@ app.get("/posts/:postId/image", async (req, res) => {
   if (!bin) return res.status(404).send("Sem imagem");
   res.set("Content-Type", "image/jpeg").send(bin);
 });
+
+app.use(checkAuth);
 
 /* ---------- 3. Feed público ------------------------------------------- */
 app.get("/posts", async (req, res) => {
