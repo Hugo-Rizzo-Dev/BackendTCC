@@ -19,6 +19,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(checkAuth);
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.get("/", (_, res) => res.send("API TCC - ok"));
@@ -902,7 +903,6 @@ function checkAuth(req, res, next) {
     return res.status(401).json({ message: "Invalid token" });
   }
 }
-app.use(checkAuth);
 
 // lista de denúncias pendentes
 app.get("/admin/reports", checkAuth, adminOnly, async (req, res) => {
