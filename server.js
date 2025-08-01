@@ -199,27 +199,34 @@ app.get("/users/:id/avatar", async (req, res) => {
 /* ---------- 5. Login --------------------------------------------------- */
 app.post("/login", async (req, res) => {
   const { email, senha } = req.body;
-  if (!email || !senha)
-    return res.status(400).json({ message: "Informe email e senha" });
+  if (!email || !senha) {
+    return res.status(400).json({ message: "E-mail and password required" });
+  }
 
   try {
     const pool = await poolPromise;
-    const r = await pool
+    const { recordset } = await pool
       .request()
-      .input("email", sql.NVarChar, email)
-      .query(
-        `SELECT id, nome, sobrenome, senhaHash, isAdmin,
-                CASE WHEN fotoPerfilData IS NOT NULL THEN 1 ELSE 0 END AS temAvatar
-         FROM dbo.Usuarios WHERE email=@email`
-      );
+      .input("email", sql.NVarChar, email).query(`
+        SELECT id, nome, sobrenome, senhaHash, isAdmin,
+               CASE WHEN fotoPerfilData IS NOT NULL THEN 1 ELSE 0 END AS temAvatar
+        FROM   dbo.Usuarios
+        WHERE  email = @email
+      `);
 
     if (
-      !r.recordset.length ||
-      !(await bcrypt.compare(senha, r.recordset[0].senhaHash))
-    )
-      return res.status(401).json({ message: "Credenciais inválidas" });
+      !recordset.length ||
+      !(await bcrypt.compare(senha, recordset[0].senhaHash))
+    ) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
-    const u = r.recordset[0];
+    const u = recordset[0];
+
+    const token = jwt.sign({ userId: u.id, isAdmin: !!u.isAdmin }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
     res.json({
       user: {
         id: u.id,
@@ -228,10 +235,11 @@ app.post("/login", async (req, res) => {
         isAdmin: !!u.isAdmin,
         fotoPerfil: buildAvatarUrl(req, u.id, u.temAvatar),
       },
+      token,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Erro interno" });
+    console.error("[LOGIN] internal error:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 });
 
@@ -868,52 +876,32 @@ ${reason}
 });
 
 // middlewares
-async function adminOnly(req, res, next) {
-  try {
-    if (!req.userId) return res.status(401).send("não autenticado");
-
-    const pool = await poolPromise;
-    const { recordset } = await pool
-      .request()
-      .input("id", sql.UniqueIdentifier, req.userId)
-      .query("SELECT isAdmin FROM dbo.Usuarios WHERE id = @id");
-
-    if (!recordset[0]?.isAdmin) {
-      return res
-        .status(403)
-        .json({ message: "Acesso negado. Apenas administradores." });
-    }
-
-    next();
-  } catch (err) {
-    console.error("adminOnly middleware error:", err);
-    res.status(500).json({ message: "Erro interno no servidor." });
+function adminOnly(req, res, next) {
+  // checkAuth já preenche req.isAdmin
+  if (!req.isAdmin) {
+    return res.status(403).json({ message: "Access denied. Admins only." });
   }
-}
-
-function checkAuth(req, _res, next) {
-  const hdr = req.headers.authorization;
-  if (hdr?.startsWith("Bearer ")) {
-    try {
-      const { userId } = jwt.verify(hdr.slice(7), JWT_SECRET);
-      req.userId = userId;
-    } catch {}
-  }
-
-  if (
-    process.env.NODE_ENV !== "production" &&
-    !req.userId &&
-    req.headers["x-user-id"]
-  ) {
-    console.warn(
-      `[AUTH_WARN] Usando X-User-Id inseguro para ${req.headers["x-user-id"]}`
-    );
-    req.userId = req.headers["x-user-id"];
-  }
-
   next();
 }
 
+function checkAuth(req, res, next) {
+  const hdr = req.headers.authorization;
+
+  // must be "Bearer <token>"
+  if (!hdr?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  try {
+    const payload = jwt.verify(hdr.slice(7), JWT_SECRET);
+    req.userId = payload.userId;
+    req.isAdmin = payload.isAdmin;
+    next(); // authenticated → continue
+  } catch (err) {
+    console.error("[AUTH] invalid token:", err.message);
+    return res.status(401).json({ message: "Invalid token" });
+  }
+}
 app.use(checkAuth);
 
 // lista de denúncias pendentes
