@@ -391,11 +391,7 @@ app.get("/posts", async (req, res) => {
 // Rota para o autor do post iniciar uma votação
 app.post("/posts/:postId/iniciar-votacao", checkAuth, async (req, res) => {
   const { postId } = req.params;
-  const { userId } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ message: "ID do usuário não fornecido." });
-  }
+  const { userId } = req;
 
   try {
     const pool = await poolPromise;
@@ -409,7 +405,7 @@ app.post("/posts/:postId/iniciar-votacao", checkAuth, async (req, res) => {
 
     const post = postResult.recordset[0];
 
-    if (!post || post.usuarioId.toLowerCase() !== userId.toLowerCase()) {
+    if (!post || post.usuarioId !== userId) {
       return res
         .status(403)
         .json({ message: "Apenas o autor pode iniciar uma votação." });
@@ -874,10 +870,7 @@ ${reason}
 // middlewares
 async function adminOnly(req, res, next) {
   try {
-    // A única mudança real é garantir que estamos usando req.userId
-    if (!req.userId) {
-      return res.status(401).json({ message: "Usuário não autenticado." });
-    }
+    if (!req.userId) return res.status(401).send("não autenticado");
 
     const pool = await poolPromise;
     const { recordset } = await pool
@@ -891,7 +884,7 @@ async function adminOnly(req, res, next) {
         .json({ message: "Acesso negado. Apenas administradores." });
     }
 
-    next(); // Se chegou até aqui, o usuário é admin e pode prosseguir
+    next();
   } catch (err) {
     console.error("adminOnly middleware error:", err);
     res.status(500).json({ message: "Erro interno no servidor." });
