@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const express = require("express");
+const crypto = require("crypto");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const axios = require("axios");
@@ -13,9 +14,6 @@ const { gerarDescricaoIA } = require("./gemini");
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 
-/* ----------------------------------------------------------------
- * Setup básico
- * ----------------------------------------------------------------*/
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -266,7 +264,6 @@ app.post("/login", async (req, res) => {
       return res.status(401).json({ message: "Credenciais inválidas" });
 
     const u = r.recordset[0];
-    // NOTA: Aqui seria o local ideal para gerar e retornar um JWT token.
     res.json({
       user: {
         id: u.id,
@@ -279,6 +276,123 @@ app.post("/login", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Erro interno" });
+  }
+});
+
+/* Reset Password */
+app.post("/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ message: "O e-mail é obrigatório." });
+  }
+
+  try {
+    const pool = await poolPromise;
+    const { recordset } = await pool
+      .request()
+      .input("email", sql.NVarChar, email)
+      .query("SELECT id FROM dbo.Usuarios WHERE email = @email");
+
+    const user = recordset[0];
+
+    if (!user) {
+      console.log(
+        `[PASS_RESET] Tentativa de reset para e-mail não cadastrado: ${email}`
+      );
+      return res.json({
+        message:
+          "Se um usuário com este e-mail existir, um link de recuperação foi enviado.",
+      });
+    }
+
+    const resetToken = crypto.randomBytes(20).toString("hex");
+
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
+
+    const expires = new Date();
+    expires.setHours(expires.getHours() + 1);
+
+    await pool
+      .request()
+      .input("id", sql.UniqueIdentifier, user.id)
+      .input("token", sql.NVarChar, tokenHash)
+      .input("expires", sql.DateTime, expires).query(`
+        UPDATE dbo.Usuarios 
+        SET resetPasswordToken = @token, resetPasswordExpires = @expires
+        WHERE id = @id
+      `);
+
+    const resetUrl = `appturismo://reset-password?token=${resetToken}`;
+
+    await transporter.sendMail({
+      from: `"App Turismo" <${process.env.REPORT_SMTP_USER}>`,
+      to: email,
+      subject: "Recuperação de Senha - App Turismo",
+      html: `
+        <p>Você solicitou uma redefinição de senha.</p>
+        <p>Clique neste <a href="${resetUrl}">link</a> para criar uma nova senha.</p>
+        <p>Este link é válido por 1 hora.</p>
+        <p>Se você não solicitou isso, por favor ignore este e-mail.</p>
+      `,
+    });
+
+    res.json({
+      message:
+        "Se um usuário com este e-mail existir, um link de recuperação foi enviado.",
+    });
+  } catch (err) {
+    console.error("Erro em /forgot-password:", err);
+    res.status(500).json({ message: "Erro interno no servidor." });
+  }
+});
+
+app.post("/reset-password", async (req, res) => {
+  const { token, senha } = req.body;
+
+  if (!token || !senha) {
+    return res
+      .status(400)
+      .json({ message: "Token e nova senha são obrigatórios." });
+  }
+
+  try {
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+    const pool = await poolPromise;
+    const { recordset } = await pool
+      .request()
+      .input("tokenHash", sql.NVarChar, tokenHash)
+      .input("now", sql.DateTime, new Date()).query(`
+                SELECT id FROM dbo.Usuarios 
+                WHERE resetPasswordToken = @tokenHash AND resetPasswordExpires > @now
+            `);
+
+    const user = recordset[0];
+
+    if (!user) {
+      return res.status(400).json({ message: "Token inválido ou expirado." });
+    }
+
+    const novaSenhaHash = await bcrypt.hash(senha, 10);
+
+    await pool
+      .request()
+      .input("id", sql.UniqueIdentifier, user.id)
+      .input("senhaHash", sql.NVarChar, novaSenhaHash).query(`
+                UPDATE dbo.Usuarios 
+                SET senhaHash = @senhaHash,
+                    resetPasswordToken = NULL,  -- Invalida o token após o uso
+                    resetPasswordExpires = NULL
+                WHERE id = @id
+            `);
+
+    res.json({ message: "Senha redefinida com sucesso!" });
+  } catch (err) {
+    console.error("Erro em /reset-password:", err);
+    res.status(500).json({ message: "Erro interno no servidor." });
   }
 });
 
@@ -298,8 +412,6 @@ app.post("/posts", upload.single("foto"), async (req, res) => {
   let lat = latitude ? +latitude : null;
   let lng = longitude ? +longitude : null;
   let nomeDoLocal = localNome;
-
-  // ... (lógica de geolocalização) ...
 
   const postId = uuidv4();
 
