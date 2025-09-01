@@ -326,17 +326,20 @@ app.post("/forgot-password", async (req, res) => {
       `);
 
     const resetUrl = `appturismo://reset-password?token=${resetToken}`;
+    console.log("URL de reset gerada:", resetUrl);
 
     await transporter.sendMail({
       from: `"App Turismo" <${process.env.REPORT_SMTP_USER}>`,
       to: email,
       subject: "Recuperação de Senha - App Turismo",
       html: `
-        <p>Você solicitou uma redefinição de senha.</p>
-        <p>Clique neste <a href="${resetUrl}">link</a> para criar uma nova senha.</p>
-        <p>Este link é válido por 1 hora.</p>
-        <p>Se você não solicitou isso, por favor ignore este e-mail.</p>
-      `,
+    <p>Olá,</p>
+    <p>Você solicitou uma redefinição de senha para sua conta no App Turismo.</p>
+    <p>Clique no link abaixo para criar uma nova senha:</p>
+    <p><a href="${resetUrl}">${resetUrl}</a></p>
+    <p>Este link é válido por 1 hora.</p>
+    <p>Se você não solicitou esta alteração, por favor ignore este e-mail.</p>
+  `,
     });
 
     res.json({
