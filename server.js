@@ -296,55 +296,47 @@ app.post("/forgot-password", async (req, res) => {
     const user = recordset[0];
 
     if (!user) {
-      console.log(
-        `[PASS_RESET] Tentativa de reset para e-mail não cadastrado: ${email}`
-      );
+      // Por segurança, não informe que o e-mail não existe
       return res.json({
         message:
-          "Se um usuário com este e-mail existir, um link de recuperação foi enviado.",
+          "Se um usuário com este e-mail existir, um código de recuperação foi enviado.",
       });
     }
 
-    const resetToken = crypto.randomBytes(20).toString("hex");
-
-    const tokenHash = crypto
-      .createHash("sha256")
-      .update(resetToken)
-      .digest("hex");
+    // GERE UM CÓDIGO DE 6 DÍGITOS
+    const resetCode = crypto.randomInt(100000, 999999).toString();
 
     const expires = new Date();
-    expires.setHours(expires.getHours() + 1);
+    expires.setMinutes(expires.getMinutes() + 10); // Código válido por 10 minutos
 
+    // Salve o código (pode ser o código puro, já que é curto e aleatório)
     await pool
       .request()
       .input("id", sql.UniqueIdentifier, user.id)
-      .input("token", sql.NVarChar, tokenHash)
+      .input("token", sql.NVarChar, resetCode) // Usando a mesma coluna para o código
       .input("expires", sql.DateTime, expires).query(`
         UPDATE dbo.Usuarios 
         SET resetPasswordToken = @token, resetPasswordExpires = @expires
         WHERE id = @id
       `);
 
-    const resetUrl = `appturismo://reset-password?token=${resetToken}`;
-    console.log("URL de reset gerada:", resetUrl);
-
+    // ENVIE O E-MAIL COM O CÓDIGO
     await transporter.sendMail({
       from: `"App Turismo" <${process.env.REPORT_SMTP_USER}>`,
       to: email,
-      subject: "Recuperação de Senha - App Turismo",
+      subject: "Seu Código de Recuperação de Senha - App Turismo",
       html: `
-    <p>Olá,</p>
-    <p>Você solicitou uma redefinição de senha para sua conta no App Turismo.</p>
-    <p>Clique no link abaixo para criar uma nova senha:</p>
-    <p><a href="${resetUrl}">${resetUrl}</a></p>
-    <p>Este link é válido por 1 hora.</p>
-    <p>Se você não solicitou esta alteração, por favor ignore este e-mail.</p>
-  `,
+        <p>Olá,</p>
+        <p>Use o código abaixo para redefinir sua senha no App Turismo.</p>
+        <h2 style="text-align:center; letter-spacing: 5px;">${resetCode}</h2>
+        <p>Este código é válido por 10 minutos.</p>
+        <p>Se você não solicitou isso, ignore este e-mail.</p>
+      `,
     });
 
     res.json({
       message:
-        "Se um usuário com este e-mail existir, um link de recuperação foi enviado.",
+        "Se um usuário com este e-mail existir, um código de recuperação foi enviado.",
     });
   } catch (err) {
     console.error("Erro em /forgot-password:", err);
@@ -352,48 +344,86 @@ app.post("/forgot-password", async (req, res) => {
   }
 });
 
-app.post("/reset-password", async (req, res) => {
-  const { token, senha } = req.body;
-
-  if (!token || !senha) {
+app.post("/verify-code", async (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
     return res
       .status(400)
-      .json({ message: "Token e nova senha são obrigatórios." });
+      .json({ message: "E-mail e código são obrigatórios." });
   }
 
   try {
-    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-
     const pool = await poolPromise;
     const { recordset } = await pool
       .request()
-      .input("tokenHash", sql.NVarChar, tokenHash)
+      .input("email", sql.NVarChar, email)
+      .input("code", sql.NVarChar, code)
       .input("now", sql.DateTime, new Date()).query(`
-                SELECT id FROM dbo.Usuarios 
-                WHERE resetPasswordToken = @tokenHash AND resetPasswordExpires > @now
-            `);
+        SELECT id FROM dbo.Usuarios 
+        WHERE email = @email AND resetPasswordToken = @code AND resetPasswordExpires > @now
+      `);
 
     const user = recordset[0];
 
     if (!user) {
-      return res.status(400).json({ message: "Token inválido ou expirado." });
+      return res.status(400).json({ message: "Código inválido ou expirado." });
     }
-
-    const novaSenhaHash = await bcrypt.hash(senha, 10);
 
     await pool
       .request()
       .input("id", sql.UniqueIdentifier, user.id)
+      .query(
+        `UPDATE dbo.Usuarios SET resetPasswordToken = NULL WHERE id = @id`
+      );
+
+    const resetAuthToken = jwt.sign({ userId: user.id }, JWT_SECRET, {
+      expiresIn: "5m",
+    });
+
+    res.json({
+      message: "Código verificado com sucesso.",
+      resetAuthToken: resetAuthToken,
+    });
+  } catch (err) {
+    console.error("Erro em /verify-code:", err);
+    res.status(500).json({ message: "Erro interno no servidor." });
+  }
+});
+
+app.post("/reset-password", async (req, res) => {
+  const { resetAuthToken, senha } = req.body;
+
+  if (!resetAuthToken || !senha) {
+    return res
+      .status(400)
+      .json({ message: "Token de autorização e nova senha são obrigatórios." });
+  }
+
+  try {
+    // Verifique o token JWT
+    const decoded = jwt.verify(resetAuthToken, JWT_SECRET);
+    const userId = decoded.userId;
+
+    const novaSenhaHash = await bcrypt.hash(senha, 10);
+
+    const pool = await poolPromise;
+    await pool
+      .request()
+      .input("id", sql.UniqueIdentifier, userId)
       .input("senhaHash", sql.NVarChar, novaSenhaHash).query(`
-                UPDATE dbo.Usuarios 
-                SET senhaHash = @senhaHash,
-                    resetPasswordToken = NULL,  -- Invalida o token após o uso
-                    resetPasswordExpires = NULL
-                WHERE id = @id
-            `);
+        UPDATE dbo.Usuarios 
+        SET senhaHash = @senhaHash,
+            resetPasswordExpires = NULL
+        WHERE id = @id
+      `);
 
     res.json({ message: "Senha redefinida com sucesso!" });
   } catch (err) {
+    if (err instanceof jwt.JsonWebTokenError) {
+      return res
+        .status(401)
+        .json({ message: "Token de autorização inválido ou expirado." });
+    }
     console.error("Erro em /reset-password:", err);
     res.status(500).json({ message: "Erro interno no servidor." });
   }
