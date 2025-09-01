@@ -39,9 +39,6 @@ function checkAuth(req, _res, next) {
     }
   }
 
-  // --- CORREÇÃO PRINCIPAL ---
-  // Removemos a verificação de 'NODE_ENV' para permitir que o 'X-User-Id' funcione em produção.
-  // Isso é uma solução de curto prazo. O ideal é implementar o fluxo completo de JWT.
   if (!req.userId && req.headers["x-user-id"]) {
     console.warn(
       `[AUTH_WARN] Usando cabeçalho X-User-Id inseguro para o usuário: ${req.headers["x-user-id"]}`
@@ -55,7 +52,6 @@ function checkAuth(req, _res, next) {
 // Middleware para rotas de administrador
 async function adminOnly(req, res, next) {
   try {
-    // Agora req.userId deve estar definido corretamente
     if (!req.userId) {
       return res.status(401).json({ message: "Autenticação necessária." });
     }
@@ -92,7 +88,6 @@ function buildAvatarUrl(req, id, temAvatar) {
  * ROTAS
  * =================================================================*/
 
-// Aplicar o middleware de autenticação a todas as rotas abaixo dele
 app.use(checkAuth);
 
 /* ---------- USUÁRIOS ------------------------------------------------ */
@@ -126,7 +121,6 @@ app.post("/users", async (req, res) => {
   } catch (err) {
     console.error(err);
     if (err.number === 2627)
-      // chave duplicada
       return res.status(409).json({ message: "E-mail já cadastrado" });
     res.status(500).json({ message: "Erro interno" });
   }
