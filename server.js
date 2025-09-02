@@ -497,6 +497,31 @@ app.post("/reset-password", async (req, res) => {
   }
 });
 
+// Verificar imagem
+app.post("/moderate-image", upload.single("foto"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ ok: false, message: "Image is required." });
+    }
+    const moderation = await moderateImageWithVision(req.file.buffer);
+    if (!moderation.ok) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          "Imagem reprovada automaticamente por conter conteúdo impróprio.",
+        reasons: moderation.reasons,
+      });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[Vision] Pre-check failed:", err.message);
+    return res.status(502).json({
+      ok: false,
+      message: "Falha ao verificar a imagem na Vision API.",
+    });
+  }
+});
+
 /* ---------- POSTS -------------------------------------------------- */
 app.post("/posts", upload.single("foto"), async (req, res) => {
   const {
@@ -515,7 +540,7 @@ app.post("/posts", upload.single("foto"), async (req, res) => {
     if (!moderation.ok) {
       return res.status(400).json({
         message:
-          "Imagem reprovada automaticamente por conter conteúdo improprio.",
+          "Imagem reprovada automaticamente por conter conteúdo impróprio.",
         reasons: moderation.reasons,
       });
     }
