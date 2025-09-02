@@ -1,7 +1,6 @@
 require("dotenv").config();
 const axios = require("axios");
 
-// A função agora recebe o prompt completo como argumento.
 async function gerarDescricaoIA(prompt) {
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   if (!GEMINI_API_KEY) {
@@ -9,23 +8,19 @@ async function gerarDescricaoIA(prompt) {
     throw new Error("Chave da API Gemini não configurada");
   }
 
-  // A URL da API com a chave e o nome do modelo.
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
 
-  // O corpo da requisição agora usa o prompt recebido diretamente.
   const requestBody = {
     contents: [{ parts: [{ text: prompt }] }],
   };
 
   try {
-    // Faz a chamada POST para a URL.
     const { data } = await axios.post(url, requestBody, {
       headers: {
         "Content-Type": "application/json",
       },
     });
 
-    // Extrai o texto da resposta da API.
     const textoGerado = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (textoGerado) {

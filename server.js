@@ -21,9 +21,83 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.get("/", (_, res) => res.send("API TCC - ok"));
 
-/* =================================================================
- * MIDDLEWARES
- * =================================================================*/
+/* Filter Posts */
+async function moderateImageWithVision(buffer) {
+  const apiKey = process.env.VISION_API_KEY;
+  if (!apiKey) {
+    console.error("[Vision] Missing VISION_API_KEY env var");
+    throw new Error("Vision API key not configured");
+  }
+
+  const payload = {
+    requests: [
+      {
+        image: { content: buffer.toString("base64") },
+        features: [
+          { type: "SAFE_SEARCH_DETECTION", maxResults: 1 },
+          { type: "LABEL_DETECTION", maxResults: 50 },
+        ],
+      },
+    ],
+  };
+
+  const url = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
+
+  const { data } = await axios.post(url, payload, {
+    headers: { "Content-Type": "application/json" },
+  });
+
+  const resp = data?.responses?.[0] || {};
+  const safe = resp.safeSearchAnnotation || {};
+
+  const badLikelihood = new Set(["LIKELY", "VERY_LIKELY"]);
+  const reasons = [];
+
+  if (badLikelihood.has(safe.adult)) reasons.push("adult");
+  if (badLikelihood.has(safe.violence)) reasons.push("violence");
+  if (badLikelihood.has(safe.racy)) reasons.push("racy");
+  if (badLikelihood.has(safe.medical)) reasons.push("medical");
+  if (badLikelihood.has(safe.spoof)) reasons.push("spoof");
+
+  const labels = (resp.labelAnnotations || []).map((l) =>
+    (l.description || "").toLowerCase()
+  );
+
+  const weaponTerms = new Set([
+    "weapon",
+    "gun",
+    "handgun",
+    "pistol",
+    "rifle",
+    "shotgun",
+    "machine gun",
+    "knife",
+    "dagger",
+  ]);
+  const drugTerms = new Set([
+    "drug",
+    "illicit drug",
+    "narcotic",
+    "cannabis",
+    "marijuana",
+    "weed",
+    "cocaine",
+    "heroin",
+    "methamphetamine",
+    "meth",
+    "opioid",
+    "pills",
+  ]);
+
+  if (labels.some((d) => weaponTerms.has(d))) reasons.push("weapon");
+  if (labels.some((d) => drugTerms.has(d))) reasons.push("drugs");
+
+  const ok = reasons.length === 0;
+  if (!ok) {
+    console.warn("[Vision] Image blocked. Reasons:", reasons.join(", "));
+  }
+  return { ok, reasons, safe, labels };
+}
 
 // Middleware para verificar autenticação
 function checkAuth(req, _res, next) {
@@ -296,31 +370,27 @@ app.post("/forgot-password", async (req, res) => {
     const user = recordset[0];
 
     if (!user) {
-      // Por segurança, não informe que o e-mail não existe
       return res.json({
         message:
           "Se um usuário com este e-mail existir, um código de recuperação foi enviado.",
       });
     }
 
-    // GERE UM CÓDIGO DE 6 DÍGITOS
     const resetCode = crypto.randomInt(100000, 999999).toString();
 
     const expires = new Date();
-    expires.setMinutes(expires.getMinutes() + 10); // Código válido por 10 minutos
+    expires.setMinutes(expires.getMinutes() + 10);
 
-    // Salve o código (pode ser o código puro, já que é curto e aleatório)
     await pool
       .request()
       .input("id", sql.UniqueIdentifier, user.id)
-      .input("token", sql.NVarChar, resetCode) // Usando a mesma coluna para o código
+      .input("token", sql.NVarChar, resetCode)
       .input("expires", sql.DateTime, expires).query(`
         UPDATE dbo.Usuarios 
         SET resetPasswordToken = @token, resetPasswordExpires = @expires
         WHERE id = @id
       `);
 
-    // ENVIE O E-MAIL COM O CÓDIGO
     await transporter.sendMail({
       from: `"App Turismo" <${process.env.REPORT_SMTP_USER}>`,
       to: email,
@@ -335,8 +405,7 @@ app.post("/forgot-password", async (req, res) => {
     });
 
     res.json({
-      message:
-        "Se um usuário com este e-mail existir, um código de recuperação foi enviado.",
+      message: "Um código de recuperação foi enviado para seu email.",
     });
   } catch (err) {
     console.error("Erro em /forgot-password:", err);
@@ -400,7 +469,6 @@ app.post("/reset-password", async (req, res) => {
   }
 
   try {
-    // Verifique o token JWT
     const decoded = jwt.verify(resetAuthToken, JWT_SECRET);
     const userId = decoded.userId;
 
@@ -441,6 +509,22 @@ app.post("/posts", upload.single("foto"), async (req, res) => {
     tags,
   } = req.body;
   if (!req.file) return res.status(400).json({ message: "Foto obrigatória" });
+
+  try {
+    const moderation = await moderateImageWithVision(req.file.buffer);
+    if (!moderation.ok) {
+      return res.status(400).json({
+        message:
+          "Imagem reprovada automaticamente por conter conteúdo improprio.",
+        reasons: moderation.reasons,
+      });
+    }
+  } catch (err) {
+    console.error("[Vision] Moderation failed:", err.message);
+    return res.status(502).json({
+      message: "Falha ao verificar a imagem na Vision API.",
+    });
+  }
 
   let lat = latitude ? +latitude : null;
   let lng = longitude ? +longitude : null;
