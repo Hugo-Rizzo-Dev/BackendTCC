@@ -151,9 +151,15 @@ async function adminOnly(req, res, next) {
  * HELPERS
  * =================================================================*/
 function buildAvatarUrl(req, id, temAvatar) {
-  return temAvatar
-    ? `${req.protocol}://${req.get("host")}/users/${id}/avatar`
-    : null;
+  if (!temAvatar) {
+    return null;
+  }
+
+  const protocol =
+    process.env.NODE_ENV === "production" ? "https" : req.protocol;
+  const host = req.get("host");
+
+  return `${protocol}://${host}/users/${id}/avatar`;
 }
 
 /* =================================================================
