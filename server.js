@@ -291,18 +291,21 @@ app.get("/users/:id/following", async (req, res) => {
     const r = await pool
       .request()
       .input("id", sql.UniqueIdentifier, req.params.id).query(`
-                SELECT seguidoId AS id,
-                        nome, sobrenome,
-                        CASE WHEN temAvatar = 1 THEN
-                            CONCAT('${req.protocol}://${req.get(
-      "host"
-    )}/users/', seguidoId, '/avatar')
-                        ELSE NULL END AS fotoPerfil
-                FROM    dbo.vw_Following
-                WHERE   userId = @id
-                ORDER  BY nome, sobrenome
-            `);
-    res.json(r.recordset);
+        SELECT seguidoId AS id,
+               nome, 
+               sobrenome,
+               temAvatar -- Apenas o campo booleano
+        FROM   dbo.vw_Following
+        WHERE  userId = @id
+        ORDER  BY nome, sobrenome
+      `);
+
+    const followingList = r.recordset.map((user) => ({
+      ...user,
+      fotoPerfil: buildAvatarUrl(req, user.id, user.temAvatar),
+    }));
+
+    res.json(followingList);
   } catch (err) {
     console.error("following list:", err);
     res.status(500).json({ message: "Erro interno" });
