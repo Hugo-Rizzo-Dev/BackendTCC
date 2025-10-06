@@ -1205,6 +1205,7 @@ app.post("/validate-report", async (req, res) => {
 
     const { data } = await axios.post(url, payload, {
       headers: { "Content-Type": "application/json" },
+      timeout: 8000,
     });
 
     const responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -1233,9 +1234,8 @@ app.post("/validate-report", async (req, res) => {
 
 app.post("/reports", async (req, res) => {
   const { postId, reporterId, reason } = req.body;
-  if (!reason?.trim()) {
+  if (!reason?.trim())
     return res.status(400).json({ message: "Motivo obrigatório" });
-  }
 
   try {
     const pool = await poolPromise;
@@ -1243,101 +1243,49 @@ app.post("/reports", async (req, res) => {
     const { recordset: post } = await pool
       .request()
       .input("id", sql.UniqueIdentifier, postId)
-      .query(`SELECT usuarioId, imagemData FROM dbo.Posts WHERE id = @id`);
+      .query("SELECT usuarioId, imagemData FROM dbo.Posts WHERE id = @id");
 
-    if (!post.length) {
+    if (!post.length)
       return res.status(404).json({ message: "Post não encontrado" });
-    }
-
-    const imageBuffer = post[0].imagemData;
-    const imageBase64 = imageBuffer.toString("base64");
-
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-
-    const prompt = `
-      Você é um moderador de conteúdo para o app "SpotClick".
-      Avalie se a denúncia abaixo é legítima e relevante.
-      Retorne APENAS em JSON:
-      {
-        "isValid": boolean,
-        "reasoning": "frase curta explicando em português o motivo"
-      }
-      Texto da denúncia: "${reason}"
-    `;
-
-    const payload = {
-      contents: [
-        {
-          parts: [
-            { text: prompt },
-            { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
-          ],
-        },
-      ],
-    };
-
-    const { data } = await axios.post(url, payload, {
-      headers: { "Content-Type": "application/json" },
-    });
-
-    const aiText =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text
-        ?.replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim() || "{}";
-
-    let aiResult;
-    try {
-      aiResult = JSON.parse(aiText);
-    } catch {
-      aiResult = { isValid: false, reasoning: "Resposta inválida da IA." };
-    }
-
-    console.log("[AI Validation Result]", aiResult);
-
-    if (!aiResult.isValid) {
-      return res.status(400).json({
-        message: "Denúncia marcada como inválida pela IA.",
-        reasoning: aiResult.reasoning,
-      });
-    }
 
     await pool
       .request()
       .input("rid", sql.UniqueIdentifier, uuidv4())
       .input("pid", sql.UniqueIdentifier, postId)
       .input("uid", sql.UniqueIdentifier, reporterId)
-      .input("reason", sql.NVarChar, reason.slice(0, 500)).query(`
-        INSERT dbo.Reports(id, postId, reporterId, reason)
-        VALUES (@rid, @pid, @uid, @reason)
-      `);
+      .input("reason", sql.NVarChar, reason.slice(0, 500))
+      .query(
+        "INSERT dbo.Reports(id,postId,reporterId,reason) VALUES (@rid,@pid,@uid,@reason)"
+      );
+    res.json({ ok: true });
 
-    try {
-      await transporter.sendMail({
-        from: `"Denúncias AppTurismo" <${process.env.REPORT_SMTP_USER}>`,
-        to: process.env.REPORT_MAIL,
-        subject: "Nova denúncia de post validada",
-        text: `Post ID: ${postId}
-        Autor do post: ${post[0].usuarioId}
-        Denunciante: ${reporterId}
-
-        Motivo informado:
-        ${reason}
-
-        Análise IA: ${aiResult.reasoning}`,
-        attachments: [
-          { filename: `${postId}.jpg`, content: post[0].imagemData },
-        ],
-      });
-    } catch (emailErr) {
-      console.error("[REPORT] Falha ao enviar e-mail:", emailErr.message);
-    }
-
-    res.json({ ok: true, reasoning: aiResult.reasoning });
+    setImmediate(async () => {
+      try {
+        console.log("[REPORT] Sending moderation email...");
+        await Promise.race([
+          transporter.sendMail({
+            from: `"Denúncias AppTurismo" <${process.env.REPORT_SMTP_USER}>`,
+            to: process.env.REPORT_MAIL,
+            subject: "Nova denúncia de post",
+            text:
+              `Post ID: ${postId}\nAutor do post: ${post[0].usuarioId}\n` +
+              `Denunciante: ${reporterId}\n\nMotivo informado:\n${reason}`,
+            attachments: [
+              { filename: `${postId}.jpg`, content: post[0].imagemData },
+            ],
+          }),
+          new Promise((_, rej) =>
+            setTimeout(() => rej(new Error("SMTP timeout (5s)")), 5000)
+          ),
+        ]);
+        console.log("[REPORT] Email sent successfully.");
+      } catch (err) {
+        console.error("[REPORT] Email send failed:", err.message);
+      }
+    });
   } catch (e) {
-    console.error("Erro no processo de denúncia:", e);
-    res.status(500).json({ message: "Erro interno ao processar denúncia." });
+    console.error("send report:", e);
+    res.status(500).json({ message: "Erro ao enviar denúncia" });
   }
 });
 
