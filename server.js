@@ -1168,16 +1168,29 @@ app.post("/validate-report", async (req, res) => {
     const imageBase64 = imageBuffer.toString("base64");
 
     const prompt = `
-            Você é um moderador de conteúdo de uma rede social de turismo. Analise a seguinte denúncia e determine se ela é válida.
-            Uma denúncia é válida se o texto da denúncia descrever um problema real e relevante sobre a imagem.
-            Uma denúncia é spam ou inválida se o texto for aleatório, ofensivo, não tiver relação com a imagem, ou for uma tentativa de abuso do sistema.
+            Você é um moderador de conteúdo especialista para o aplicativo "SpotClick".
+            O SpotClick é uma rede social de crowdsourcing focada em descobrir e partilhar pontos turísticos interessantes através da comunidade. O objetivo é que os próprios utilizadores definam o que é um ponto turístico.
+
+            A sua tarefa é analisar uma denúncia feita por um utilizador e determinar se ela é válida.
+
+            Uma denúncia é VÁLIDA se o texto da denúncia descrever um problema real e relevante que viole as regras da comunidade, tais como:
+            - A imagem contém conteúdo explícito (nudez, violência, discurso de ódio).
+            - A imagem e o texto são claramente publicidade, promoção de uma loja ou spam comercial.
+            - O conteúdo não tem qualquer relação com turismo, viagens ou descoberta de locais (ex: uma selfie em casa, uma foto de um prato de comida sem contexto de restaurante, etc.).
+
+            Uma denúncia é INVÁLIDA se:
+            - O texto da denúncia for spam (caracteres aleatórios, nonsense).
+            - O texto for um ataque pessoal ou não tiver relação com o conteúdo da imagem.
+            - For uma tentativa clara de abusar do sistema de denúncias.
+
+            Analise a IMAGEM e o TEXTO DA DENÚNCIA abaixo.
 
             Texto da denúncia: "${reason}"
             
-            Analise a imagem e o texto e responda APENAS com um objeto JSON com a seguinte estrutura:
+            Responda APENAS com um objeto JSON com a seguinte estrutura:
             {
               "isValid": boolean,
-              "reasoning": "explique brevemente em uma frase o porquê da sua decisão."
+              "reasoning": "explique em português e numa frase curta e direta o porquê da sua decisão."
             }
         `;
 
