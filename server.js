@@ -1205,7 +1205,7 @@ app.post("/validate-report", async (req, res) => {
 
     const { data } = await axios.post(url, payload, {
       headers: { "Content-Type": "application/json" },
-      timeout: 8000,
+      timeout: 20000,
     });
 
     const responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
