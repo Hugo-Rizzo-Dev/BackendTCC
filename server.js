@@ -11,6 +11,8 @@ const nodemailer = require("nodemailer");
 const { v4: uuidv4 } = require("uuid");
 const { poolPromise, sql } = require("./db");
 const { gerarDescricaoIA } = require("./gemini");
+const { OAuth2Client } = require("google-auth-library");
+const client = new OAuth2Client();
 
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
@@ -19,6 +21,82 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 const upload = multer({ storage: multer.memoryStorage() });
+
+app.post("/auth/google", async (req, res) => {
+  const { idToken } = req.body;
+  if (!idToken) {
+    return res.status(400).json({ message: "ID Token não fornecido." });
+  }
+
+  try {
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_WEB_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    const { email, name, given_name, family_name, picture } = payload;
+
+    if (!email) {
+      return res
+        .status(400)
+        .json({ message: "Não foi possível obter o e-mail do Google." });
+    }
+
+    const pool = await poolPromise;
+
+    let userResult = await pool.request().input("email", sql.NVarChar, email)
+      .query(`SELECT id, nome, sobrenome, isAdmin, 
+                 CASE WHEN fotoPerfilData IS NOT NULL THEN 1 ELSE 0 END AS temAvatar 
+               FROM dbo.Usuarios WHERE email = @email`);
+
+    let user;
+
+    if (userResult.recordset.length > 0) {
+      console.log(`[AUTH] Usuário encontrado via Google: ${email}`);
+      user = userResult.recordset[0];
+    } else {
+      console.log(`[AUTH] Criando novo usuário via Google: ${email}`);
+      const newUserId = uuidv4();
+      const randomPassword = crypto.randomBytes(16).toString("hex");
+      const senhaHash = await bcrypt.hash(randomPassword, 10);
+
+      await pool
+        .request()
+        .input("id", sql.UniqueIdentifier, newUserId)
+        .input("nome", sql.NVarChar, given_name || name.split(" ")[0])
+        .input(
+          "sobrenome",
+          sql.NVarChar,
+          family_name || name.split(" ").slice(1).join(" ")
+        )
+        .input("email", sql.NVarChar, email)
+        .input("senhaHash", sql.NVarChar, senhaHash)
+        .input("dataNascimento", sql.Date, new Date("1900-01-01"))
+        .input("genero", sql.Char(1), "N").query(`
+          INSERT INTO dbo.Usuarios (id, nome, sobrenome, email, senhaHash, dataNascimento, genero)
+          VALUES (@id, @nome, @sobrenome, @email, @senhaHash, @dataNascimento, @genero)
+        `);
+
+      user = {
+        id: newUserId,
+        nome: given_name || name.split(" ")[0],
+        sobrenome: family_name || name.split(" ").slice(1).join(" "),
+        isAdmin: false,
+        temAvatar: 0,
+      };
+    }
+
+    res.json({
+      user: {
+        ...user,
+        fotoPerfil: buildAvatarUrl(req, user.id, user.temAvatar),
+      },
+    });
+  } catch (err) {
+    console.error("Erro na autenticação com Google:", err);
+    res.status(401).json({ message: "Falha na autenticação com Google." });
+  }
+});
 
 app.get("/", (_, res) => res.send("API TCC - ok"));
 
