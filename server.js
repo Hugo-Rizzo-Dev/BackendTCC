@@ -11,10 +11,6 @@ const nodemailer = require("nodemailer");
 const { v4: uuidv4 } = require("uuid");
 const { poolPromise, sql } = require("./db");
 const { gerarDescricaoIA } = require("./gemini");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
 
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
@@ -1164,27 +1160,21 @@ app.post("/validate-report", async (req, res) => {
         .status(404)
         .json({ message: "Imagem do post não encontrada." });
     }
-
     const imageBase64 = imageBuffer.toString("base64");
 
     const prompt = `
             Você é um moderador de conteúdo especialista para o aplicativo "SpotClick".
             O SpotClick é uma rede social de crowdsourcing focada em descobrir e partilhar pontos turísticos interessantes através da comunidade. O objetivo é que os próprios utilizadores definam o que é um ponto turístico.
-
             A sua tarefa é analisar uma denúncia feita por um utilizador e determinar se ela é válida.
-
             Uma denúncia é VÁLIDA se o texto da denúncia descrever um problema real e relevante que viole as regras da comunidade, tais como:
             - A imagem contém conteúdo explícito (nudez, violência, discurso de ódio).
             - A imagem e o texto são claramente publicidade, promoção de uma loja ou spam comercial.
             - O conteúdo não tem qualquer relação com turismo, viagens ou descoberta de locais (ex: uma selfie em casa, uma foto de um prato de comida sem contexto de restaurante, etc.).
-
             Uma denúncia é INVÁLIDA se:
             - O texto da denúncia for spam (caracteres aleatórios, nonsense).
             - O texto for um ataque pessoal ou não tiver relação com o conteúdo da imagem.
             - For uma tentativa clara de abusar do sistema de denúncias.
-
             Analise a IMAGEM e o TEXTO DA DENÚNCIA abaixo.
-
             Texto da denúncia: "${reason}"
             
             Responda APENAS com um objeto JSON com a seguinte estrutura:
@@ -1194,15 +1184,33 @@ app.post("/validate-report", async (req, res) => {
             }
         `;
 
-    const imagePart = {
-      inlineData: {
-        data: imageBase64,
-        mimeType: "image/jpeg",
-      },
+    const apiKey = process.env.GEMINI_API_KEY;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key=${apiKey}`;
+
+    const payload = {
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            {
+              inline_data: {
+                mime_type: "image/jpeg",
+                data: imageBase64,
+              },
+            },
+          ],
+        },
+      ],
     };
 
-    const result = await model.generateContent([prompt, imagePart]);
-    const responseText = result.response.text();
+    const { data } = await axios.post(url, payload, {
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!responseText) {
+      throw new Error("A IA não devolveu uma resposta válida.");
+    }
 
     const jsonResponse = JSON.parse(
       responseText
@@ -1213,7 +1221,10 @@ app.post("/validate-report", async (req, res) => {
 
     res.json(jsonResponse);
   } catch (e) {
-    console.error("Erro na validação da denúncia com IA:", e);
+    console.error(
+      "Erro na validação da denúncia com IA:",
+      e.response ? e.response.data : e.message
+    );
     res
       .status(500)
       .json({ message: "Não foi possível validar a denúncia com a IA." });
