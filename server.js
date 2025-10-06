@@ -1185,7 +1185,7 @@ app.post("/validate-report", async (req, res) => {
         `;
 
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const payload = {
       contents: [
@@ -1242,14 +1242,65 @@ app.post("/reports", async (req, res) => {
 
     const { recordset: post } = await pool
       .request()
-      .input("id", sql.UniqueIdentifier, postId).query(`
-                SELECT usuarioId, imagemData
-                FROM   dbo.Posts
-                WHERE  id = @id
-            `);
+      .input("id", sql.UniqueIdentifier, postId)
+      .query(`SELECT usuarioId, imagemData FROM dbo.Posts WHERE id = @id`);
 
     if (!post.length) {
       return res.status(404).json({ message: "Post não encontrado" });
+    }
+
+    const imageBuffer = post[0].imagemData;
+    const imageBase64 = imageBuffer.toString("base64");
+
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+    const prompt = `
+      Você é um moderador de conteúdo para o app "SpotClick".
+      Avalie se a denúncia abaixo é legítima e relevante.
+      Retorne APENAS em JSON:
+      {
+        "isValid": boolean,
+        "reasoning": "frase curta explicando em português o motivo"
+      }
+      Texto da denúncia: "${reason}"
+    `;
+
+    const payload = {
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
+          ],
+        },
+      ],
+    };
+
+    const { data } = await axios.post(url, payload, {
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const aiText =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text
+        ?.replace(/```json/g, "")
+        .replace(/```/g, "")
+        .trim() || "{}";
+
+    let aiResult;
+    try {
+      aiResult = JSON.parse(aiText);
+    } catch {
+      aiResult = { isValid: false, reasoning: "Resposta inválida da IA." };
+    }
+
+    console.log("[AI Validation Result]", aiResult);
+
+    if (!aiResult.isValid) {
+      return res.status(400).json({
+        message: "Denúncia marcada como inválida pela IA.",
+        reasoning: aiResult.reasoning,
+      });
     }
 
     await pool
@@ -1258,27 +1309,35 @@ app.post("/reports", async (req, res) => {
       .input("pid", sql.UniqueIdentifier, postId)
       .input("uid", sql.UniqueIdentifier, reporterId)
       .input("reason", sql.NVarChar, reason.slice(0, 500)).query(`
-                INSERT dbo.Reports(id,postId,reporterId,reason)
-                VALUES (@rid,@pid,@uid,@reason)
-            `);
+        INSERT dbo.Reports(id, postId, reporterId, reason)
+        VALUES (@rid, @pid, @uid, @reason)
+      `);
 
-    await transporter.sendMail({
-      from: `"Denúncias AppTurismo" <${process.env.REPORT_SMTP_USER}>`,
-      to: process.env.REPORT_MAIL,
-      subject: "Nova denúncia de post",
-      text: `Post ID: ${postId}\nAutor do post: ${post[0].usuarioId}\nDenunciante : ${reporterId}\n\nMotivo informado:\n${reason}`,
-      attachments: [
-        {
-          filename: `${postId}.jpg`,
-          content: post[0].imagemData,
-        },
-      ],
-    });
+    try {
+      await transporter.sendMail({
+        from: `"Denúncias AppTurismo" <${process.env.REPORT_SMTP_USER}>`,
+        to: process.env.REPORT_MAIL,
+        subject: "Nova denúncia de post validada",
+        text: `Post ID: ${postId}
+        Autor do post: ${post[0].usuarioId}
+        Denunciante: ${reporterId}
 
-    res.json({ ok: true });
+        Motivo informado:
+        ${reason}
+
+        Análise IA: ${aiResult.reasoning}`,
+        attachments: [
+          { filename: `${postId}.jpg`, content: post[0].imagemData },
+        ],
+      });
+    } catch (emailErr) {
+      console.error("[REPORT] Falha ao enviar e-mail:", emailErr.message);
+    }
+
+    res.json({ ok: true, reasoning: aiResult.reasoning });
   } catch (e) {
-    console.error("send report:", e);
-    res.status(500).json({ message: "Erro ao enviar denúncia" });
+    console.error("Erro no processo de denúncia:", e);
+    res.status(500).json({ message: "Erro interno ao processar denúncia." });
   }
 });
 
