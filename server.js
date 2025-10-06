@@ -11,6 +11,11 @@ const nodemailer = require("nodemailer");
 const { v4: uuidv4 } = require("uuid");
 const { poolPromise, sql } = require("./db");
 const { gerarDescricaoIA } = require("./gemini");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
+
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 
@@ -1136,6 +1141,70 @@ const transporter = nodemailer.createTransport({
     user: process.env.REPORT_SMTP_USER,
     pass: process.env.REPORT_SMTP_PASS,
   },
+});
+
+app.post("/validate-report", async (req, res) => {
+  const { postId, reason } = req.body;
+  if (!postId || !reason) {
+    return res
+      .status(400)
+      .json({ message: "ID do Post e o motivo são obrigatórios." });
+  }
+
+  try {
+    const pool = await poolPromise;
+    const postResult = await pool
+      .request()
+      .input("id", sql.UniqueIdentifier, postId)
+      .query("SELECT imagemData FROM dbo.Posts WHERE id = @id");
+
+    const imageBuffer = postResult.recordset[0]?.imagemData;
+    if (!imageBuffer) {
+      return res
+        .status(404)
+        .json({ message: "Imagem do post não encontrada." });
+    }
+
+    const imageBase64 = imageBuffer.toString("base64");
+
+    const prompt = `
+            Você é um moderador de conteúdo de uma rede social de turismo. Analise a seguinte denúncia e determine se ela é válida.
+            Uma denúncia é válida se o texto da denúncia descrever um problema real e relevante sobre a imagem.
+            Uma denúncia é spam ou inválida se o texto for aleatório, ofensivo, não tiver relação com a imagem, ou for uma tentativa de abuso do sistema.
+
+            Texto da denúncia: "${reason}"
+            
+            Analise a imagem e o texto e responda APENAS com um objeto JSON com a seguinte estrutura:
+            {
+              "isValid": boolean,
+              "reasoning": "explique brevemente em uma frase o porquê da sua decisão."
+            }
+        `;
+
+    const imagePart = {
+      inlineData: {
+        data: imageBase64,
+        mimeType: "image/jpeg",
+      },
+    };
+
+    const result = await model.generateContent([prompt, imagePart]);
+    const responseText = result.response.text();
+
+    const jsonResponse = JSON.parse(
+      responseText
+        .replace(/```json/g, "")
+        .replace(/```/g, "")
+        .trim()
+    );
+
+    res.json(jsonResponse);
+  } catch (e) {
+    console.error("Erro na validação da denúncia com IA:", e);
+    res
+      .status(500)
+      .json({ message: "Não foi possível validar a denúncia com a IA." });
+  }
 });
 
 app.post("/reports", async (req, res) => {
