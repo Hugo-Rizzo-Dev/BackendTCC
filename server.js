@@ -643,31 +643,61 @@ app.get("/posts/:postId/image", async (req, res) => {
 
 app.get("/posts", async (req, res) => {
   const viewer = req.userId ?? "00000000-0000-0000-0000-000000000000";
+  const { lat, lng } = req.query;
+
   try {
     const pool = await poolPromise;
-    const r = await pool.request().input("uid", sql.UniqueIdentifier, viewer)
-      .query(`
-                SELECT
-                    p.id, p.legenda, p.createdAt, p.latitude, p.longitude,
-                    p.localNome, p.descricaoIA,
-                    p.isPontoTuristico, p.tentativasVotacao,
-                    u.id AS autorId, u.nome, u.sobrenome,
-                    CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
-                    (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
-                    (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id) AS comments,
-                    CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl WHERE pl.postId = p.id AND pl.usuarioId = @uid)
-                            THEN 1 ELSE 0 END AS curtiu,
-                    v.id as votacaoId,
-                    v.terminaEm as votacaoTerminaEm,
-                    (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 1) AS votosSim,
-                    (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 0) AS votosNao,
-                    CASE WHEN EXISTS (SELECT 1 FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.usuarioId = @uid)
-                            THEN 1 ELSE 0 END AS jaVotou
-                FROM dbo.Posts p
-                JOIN dbo.Usuarios u ON u.id = p.usuarioId
-                LEFT JOIN dbo.Votacoes v ON v.postId = p.id AND v.status = 'ativa' AND v.terminaEm > GETUTCDATE()
-                ORDER BY p.createdAt DESC
-            `);
+    const request = pool.request().input("uid", sql.UniqueIdentifier, viewer);
+
+    let query = `
+          WITH PostsData AS (
+              SELECT
+                  p.id, p.legenda, p.createdAt, p.latitude, p.longitude,
+                  p.localNome, p.descricaoIA,
+                  p.isPontoTuristico, p.tentativasVotacao,
+                  u.id AS autorId, u.nome, u.sobrenome,
+                  CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
+                  (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
+                  (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id) AS comments,
+                  CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl WHERE pl.postId = p.id AND pl.usuarioId = @uid)
+                        THEN 1 ELSE 0 END AS curtiu,
+                  v.id as votacaoId,
+                  v.terminaEm as votacaoTerminaEm,
+                  (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 1) AS votosSim,
+                  (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 0) AS votosNao,
+                  CASE WHEN EXISTS (SELECT 1 FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.usuarioId = @uid)
+                        THEN 1 ELSE 0 END AS jaVotou,
+                  CASE 
+                      WHEN EXISTS (SELECT 1 FROM dbo.Seguidores s WHERE s.seguidorId = @uid AND s.seguidoId = u.id) 
+                      THEN 1 
+                      ELSE 0 
+                  END AS isFollowing
+                  ${
+                    lat && lng
+                      ? `,
+                  (6371 * acos(
+                      cos(radians(@userLat)) * cos(radians(p.latitude)) *
+                      cos(radians(p.longitude) - radians(@userLng)) +
+                      sin(radians(@userLat)) * sin(radians(p.latitude))
+                  )) AS distancia_km`
+                      : ""
+                  }
+              FROM dbo.Posts p
+              JOIN dbo.Usuarios u ON u.id = p.usuarioId
+              LEFT JOIN dbo.Votacoes v ON v.postId = p.id AND v.status = 'ativa' AND v.terminaEm > GETUTCDATE()
+          )
+          SELECT *
+          FROM PostsData
+          ${lat && lng ? "WHERE distancia_km <= 300" : ""}
+          ORDER BY isFollowing DESC, createdAt DESC
+      `;
+
+    if (lat && lng) {
+      request.input("userLat", sql.Float, parseFloat(lat));
+      request.input("userLng", sql.Float, parseFloat(lng));
+    }
+
+    const r = await request.query(query);
 
     const posts = r.recordset.map((p) => ({
       ...p,
@@ -683,7 +713,7 @@ app.get("/posts", async (req, res) => {
 // Rota para o autor do post iniciar uma votação
 app.post("/posts/:postId/iniciar-votacao", async (req, res) => {
   const { postId } = req.params;
-  const { userId } = req; // Agora deve funcionar
+  const { userId } = req;
 
   if (!userId) {
     return res.status(401).json({ message: "Autenticação necessária." });
