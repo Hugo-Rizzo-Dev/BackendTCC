@@ -1163,26 +1163,32 @@ app.post("/validate-report", async (req, res) => {
     const imageBase64 = imageBuffer.toString("base64");
 
     const prompt = `
-            Você é um moderador de conteúdo especialista para o aplicativo "SpotClick".
-            O SpotClick é uma rede social de crowdsourcing focada em descobrir e partilhar pontos turísticos interessantes através da comunidade. O objetivo é que os próprios utilizadores definam o que é um ponto turístico.
-            A sua tarefa é analisar uma denúncia feita por um utilizador e determinar se ela é válida.
-            Uma denúncia é VÁLIDA se o texto da denúncia descrever um problema real e relevante que viole as regras da comunidade, tais como:
-            - A imagem contém conteúdo explícito (nudez, violência, discurso de ódio).
-            - A imagem e o texto são claramente publicidade, promoção de uma loja ou spam comercial.
-            - O conteúdo não tem qualquer relação com turismo, viagens ou descoberta de locais (ex: uma selfie em casa, uma foto de um prato de comida sem contexto de restaurante, etc.).
-            Uma denúncia é INVÁLIDA se:
-            - O texto da denúncia for spam (caracteres aleatórios, nonsense).
-            - O texto for um ataque pessoal ou não tiver relação com o conteúdo da imagem.
-            - For uma tentativa clara de abusar do sistema de denúncias.
-            Analise a IMAGEM e o TEXTO DA DENÚNCIA abaixo.
-            Texto da denúncia: "${reason}"
-            
-            Responda APENAS com um objeto JSON com a seguinte estrutura:
-            {
-              "isValid": boolean,
-              "reasoning": "explique em português e numa frase curta e direta o porquê da sua decisão."
-            }
-        `;
+        Você é um moderador de conteúdo especialista e rigoroso para o aplicativo "SpotClick".
+        O SpotClick é uma rede social de crowdsourcing para descobrir pontos turísticos. O objetivo é que os próprios usuários definam o que é um ponto turístico.
+        Sua tarefa é analisar uma denúncia e determinar se ela é válida, filtrando denúncias inúteis. O ônus da prova está no denunciante: se o motivo não for claro, a denúncia é inválida.
+
+        Uma denúncia é INVÁLIDA se:
+        - O texto for spam (caracteres aleatórios, nonsense, propaganda não relacionada).
+        - O texto for um ataque pessoal ou não tiver relação com o conteúdo da imagem.
+        - O texto for apenas uma pergunta sobre o conteúdo, sem apontar uma violação (ex: "O que é isso?", "Onde fica esse lugar?").
+        - O texto for vago, genérico ou não descrever um problema real (ex: "Não gostei", "Foto ruim", "Legal", "Denunciado").
+        - For uma tentativa clara de abusar do sistema de denúncias.
+
+        Uma denúncia é VÁLIDA SOMENTE SE o texto descrever CLARAMENTE um problema real que viole as regras da comunidade, tais como:
+        - O conteúdo da imagem é explícito (nudez, violência, discurso de ódio).
+        - O post é claramente uma publicidade, promoção de loja ou spam comercial.
+        - O conteúdo não tem NENHUMA relação com turismo, viagens ou descoberta de locais (ex: uma selfie em casa, foto de um prato de comida sem contexto, um meme).
+
+        Analise a IMAGEM e o TEXTO DA DENÚNCIA abaixo. Seja crítico.
+
+        Texto da denúncia: "${reason}"
+        
+        Responda APENAS com um objeto JSON com a seguinte estrutura:
+        {
+          "isValid": boolean,
+          "reasoning": "explique em português e numa frase curta e direta o porquê da sua decisão."
+        }
+    `;
 
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
