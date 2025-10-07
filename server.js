@@ -1185,33 +1185,55 @@ app.post("/validate-report", async (req, res) => {
     const imageBase64 = imageBuffer.toString("base64");
 
     const prompt = `
-      Você é um moderador de conteúdo especialista para o aplicativo "SpotClick".
-      Sua tarefa é realizar uma análise completa de uma denúncia, usando todas as informações disponíveis sobre o post e a denúncia.
+  Você é um moderador de conteúdo assistente, profissional e neutro para o aplicativo "SpotClick".
+  Sua principal regra é: NUNCA repita ou cite diretamente palavras informais, ofensivas ou de baixo calão que você possa encontrar na imagem ou nos textos. Mantenha um tom estritamente profissional.
 
-      ### INFORMAÇÕES DO POST ANALISADO
-      - **Legenda:** "${postDetails.legenda || "Nenhuma."}"
-      - **Nome do Local:** "${postDetails.localNome || "Não especificado."}"
-      - **Tags:** "${postDetails.tags || "Nenhuma."}"
+  Sua tarefa é seguir um processo de 2 passos para analisar uma denúncia:
 
-      ### INFORMAÇÕES DA DENÚNCIA
-      - **Categoria da Denúncia:** "${category}"
+  ### INFORMAÇÕES DISPONÍVEIS
+  - Post (Imagem, Legenda, Nome do Local, Tags): Fornecido abaixo.
+  - Categoria da Denúncia (feita pelo usuário): "${category}"
+  - Lista de Todas as Categorias Válidas: "Conteúdo Explícito, Violento ou de Ódio", "Spam ou Publicidade", "Não se trata de um Ponto Turístico", "Informação Falsa ou Enganosa".
 
-      ### SUA TAREFA
-      Analise a IMAGEM e as INFORMAÇÕES DO POST em conjunto, focando estritamente na CATEGORIA DA DENÚNCIA.
+  ---
+  ### PROCESSO DE ANÁLISE
 
-      - Se a categoria for "Conteúdo Explícito, Violento ou de Ódio", foque na IMAGEM. A legenda ou tags podem conter discurso de ódio.
-      - Se a categoria for "Spam ou Publicidade", analise a IMAGEM e a LEGENDA em busca de linguagem de vendas, preços, ou links promocionais.
-      - Se a categoria for "Não se trata de um Ponto Turístico", use a IMAGEM, a LEGENDA e o NOME DO LOCAL para determinar se o conteúdo tem relevância turística. Uma legenda pode dar contexto a uma imagem aparentemente aleatória.
-      - Se a categoria for "Informação Falsa ou Enganosa", compare a IMAGEM com a LEGENDA e o NOME DO LOCAL. Procure por contradições óbvias (ex: foto de uma praia com nome do local "Centro da Cidade").
+  **Passo 1: Validar a Categoria Denunciada.**
+  Primeiro, analise o post e veja se ele viola a regra da **Categoria da Denúncia** ("${category}") fornecida pelo usuário.
 
-      Com base na sua análise completa, determine se a denúncia é VÁLIDA ou INVÁLIDA.
+  **Passo 2: Análise Secundária (APENAS se o Passo 1 falhar).**
+  Se o post NÃO violar a categoria denunciada pelo usuário, faça uma segunda análise: verifique se o post viola alguma das OUTRAS categorias da lista.
 
-      Responda APENAS com um objeto JSON com a seguinte estrutura:
-      {
-        "isValid": boolean,
-        "reasoning": "explique em português e de forma curta o porquê da sua decisão, usando as informações do post e da denúncia para justificar."
-      }
-    `;
+  ---
+  ### ESTRUTURA DA RESPOSTA
+
+  Com base na sua análise, escolha um dos três cenários abaixo para formatar sua resposta.
+
+  **Cenário A: A denúncia do usuário está correta.**
+  (O post realmente viola a categoria que o usuário apontou).
+  - "is_report_correct": true
+  - "correct_category_suggestion": null
+  - "reasoning": "Uma explicação profissional confirmando que o post viola a regra '${category}'."
+
+  **Cenário B: A denúncia do usuário está incorreta, MAS o post viola OUTRA regra.**
+  (Ex: Usuário denunciou como "Spam", mas o post é na verdade "Não se trata de um Ponto Turístico").
+  - "is_report_correct": false
+  - "correct_category_suggestion": "O nome da categoria correta que você encontrou."
+  - "reasoning": "O post não parece violar a regra de '${category}', mas foi identificado que ele se enquadra na categoria sugerida."
+
+  **Cenário C: A denúncia do usuário está incorreta e o post não viola NENHUMA regra.**
+  - "is_report_correct": false
+  - "correct_category_suggestion": null
+  - "reasoning": "Após análise, o conteúdo do post não parece violar a diretriz de '${category}' nem outras regras da comunidade."
+
+  ---
+  ### INFORMAÇÕES DO POST PARA ANÁLISE
+  - **Legenda:** "${postDetails.legenda || "Nenhuma."}"
+  - **Nome do Local:** "${postDetails.localNome || "Não especificado."}"
+  - **Tags:** "${postDetails.tags || "Nenhuma."}"
+
+  Responda APENAS com o objeto JSON final, seguindo a estrutura de um dos cenários acima.
+`;
 
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
