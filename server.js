@@ -1214,7 +1214,7 @@ app.post("/validate-report", async (req, res) => {
     `;
 
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-pro-vision:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const payload = {
       contents: [
