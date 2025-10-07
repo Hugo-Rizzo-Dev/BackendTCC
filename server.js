@@ -651,45 +651,45 @@ app.get("/posts", async (req, res) => {
     const request = pool.request().input("uid", sql.UniqueIdentifier, viewer);
 
     let query = `
-          WITH PostsData AS (
-              SELECT
-                  p.id, p.legenda, p.createdAt, p.latitude, p.longitude,
-                  p.localNome, p.descricaoIA,
-                  p.isPontoTuristico, p.tentativasVotacao,
-                  u.id AS autorId, u.nome, u.sobrenome,
-                  CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
-                  (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
-                  (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id) AS comments,
-                  CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl WHERE pl.postId = p.id AND pl.usuarioId = @uid)
-                        THEN 1 ELSE 0 END AS curtiu,
-                  v.id as votacaoId,
-                  v.terminaEm as votacaoTerminaEm,
-                  (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 1) AS votosSim,
-                  (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 0) AS votosNao,
-                  CASE WHEN EXISTS (SELECT 1 FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.usuarioId = @uid)
-                        THEN 1 ELSE 0 END AS jaVotou,
-                  CASE 
-                      WHEN EXISTS (SELECT 1 FROM dbo.Seguidores s WHERE s.seguidorId = @uid AND s.seguidoId = u.id) 
-                      THEN 1 
-                      ELSE 0 
-                  END AS isFollowing
-                  ${
-      lat && lng
-        ? `,
-                  (6371 * acos(
-                      cos(radians(@userLat)) * cos(radians(p.latitude)) *
-                      cos(radians(p.longitude) - radians(@userLng)) +
-                      sin(radians(@userLat)) * sin(radians(p.latitude))
-                  )) AS distancia_km`
-        : ""
-    }
-              FROM dbo.Posts p
-              JOIN dbo.Usuarios u ON u.id = p.usuarioId
-              LEFT JOIN dbo.Votacoes v ON v.postId = p.id AND v.status = 'ativa' AND v.terminaEm > GETUTCDATE()
-          )
-          SELECT *
-          FROM PostsData
-          ${lat && lng ? "WHERE distancia_km <= 300" : ""}
+     WITH PostsData AS (
+       SELECT
+        p.id, p.legenda, p.createdAt, p.latitude, p.longitude,
+        p.localNome, p.descricaoIA,
+        p.isPontoTuristico, p.tentativasVotacao,
+        u.id AS autorId, u.nome, u.sobrenome,
+        CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
+        (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
+        (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id) AS comments,
+        CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl WHERE pl.postId = p.id AND pl.usuarioId = @uid)
+        THEN 1 ELSE 0 END AS curtiu,
+        v.id as votacaoId,
+        v.terminaEm as votacaoTerminaEm,
+        (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 1) AS votosSim,
+        (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 0) AS votosNao,
+        CASE WHEN EXISTS (SELECT 1 FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.usuarioId = @uid)
+        THEN 1 ELSE 0 END AS jaVotou,
+        CASE 
+        WHEN EXISTS (SELECT 1 FROM dbo.Seguidores s WHERE s.seguidorId = @uid AND s.seguidoId = u.id) 
+        THEN 1 
+        ELSE 0 
+        END AS isFollowing
+   ${
+     lat && lng
+       ? `,
+        (6371 * acos(
+        cos(radians(@userLat)) * cos(radians(p.latitude)) *
+        cos(radians(p.longitude) - radians(@userLng)) +
+        sin(radians(@userLat)) * sin(radians(p.latitude))
+        )) AS distancia_km`
+       : ""
+   }
+        FROM dbo.Posts p
+        JOIN dbo.Usuarios u ON u.id = p.usuarioId
+        LEFT JOIN dbo.Votacoes v ON v.postId = p.id AND v.status = 'ativa' AND v.terminaEm > GETUTCDATE()
+        )
+      SELECT *
+      FROM PostsData
+      ${lat && lng ? "WHERE distancia_km <= 300" : ""}
           ORDER BY 
             CASE 
                 WHEN isFollowing = 1 AND createdAt >= DATEADD(hour, -24, GETUTCDATE()) 
@@ -697,7 +697,7 @@ app.get("/posts", async (req, res) => {
                 ELSE 1
             END,
             createdAt DESC
-      `;
+ `;
 
     if (lat && lng) {
       request.input("userLat", sql.Float, parseFloat(lat));
@@ -1145,21 +1145,38 @@ const transporter = nodemailer.createTransport({
 });
 
 app.post("/validate-report", async (req, res) => {
-  const { postId, reason } = req.body;
-  if (!postId || !reason) {
+  const { postId, category } = req.body;
+
+  if (!postId || !category) {
     return res
       .status(400)
-      .json({ message: "ID do Post e o motivo são obrigatórios." });
+      .json({ message: "ID do Post e a categoria são obrigatórios." });
   }
 
   try {
     const pool = await poolPromise;
     const postResult = await pool
       .request()
-      .input("id", sql.UniqueIdentifier, postId)
-      .query("SELECT imagemData FROM dbo.Posts WHERE id = @id");
+      .input("id", sql.UniqueIdentifier, postId).query(`
+        SELECT 
+          p.imagemData,
+          p.legenda,
+          p.localNome,
+          (SELECT STRING_AGG(t.nome, ', ') 
+           FROM dbo.PostTags pt 
+           JOIN dbo.Tags t ON pt.tagId = t.id 
+           WHERE pt.postId = p.id) AS tags
+        FROM dbo.Posts p 
+        WHERE p.id = @id
+      `);
 
-    const imageBuffer = postResult.recordset[0]?.imagemData;
+    if (!postResult.recordset.length) {
+      return res.status(404).json({ message: "Post não encontrado." });
+    }
+
+    const postDetails = postResult.recordset[0];
+    const imageBuffer = postDetails.imagemData;
+
     if (!imageBuffer) {
       return res
         .status(404)
@@ -1168,35 +1185,36 @@ app.post("/validate-report", async (req, res) => {
     const imageBase64 = imageBuffer.toString("base64");
 
     const prompt = `
-        Você é um moderador de conteúdo especialista e rigoroso para o aplicativo "SpotClick".
-        O SpotClick é uma rede social de crowdsourcing para descobrir pontos turísticos. O objetivo é que os próprios usuários definam o que é um ponto turístico.
-        Sua tarefa é analisar uma denúncia e determinar se ela é válida, filtrando denúncias inúteis. O ônus da prova está no denunciante: se o motivo não for claro, a denúncia é inválida.
+      Você é um moderador de conteúdo especialista para o aplicativo "SpotClick".
+      Sua tarefa é realizar uma análise completa de uma denúncia, usando todas as informações disponíveis sobre o post e a denúncia.
 
-        Uma denúncia é INVÁLIDA se:
-        - O texto for spam (caracteres aleatórios, nonsense, propaganda não relacionada).
-        - O texto for um ataque pessoal ou não tiver relação com o conteúdo da imagem.
-        - O texto for apenas uma pergunta sobre o conteúdo, sem apontar uma violação (ex: "O que é isso?", "Onde fica esse lugar?").
-        - O texto for vago, genérico ou não descrever um problema real (ex: "Não gostei", "Foto ruim", "Legal", "Denunciado").
-        - For uma tentativa clara de abusar do sistema de denúncias.
+      ### INFORMAÇÕES DO POST ANALISADO
+      - **Legenda:** "${postDetails.legenda || "Nenhuma."}"
+      - **Nome do Local:** "${postDetails.localNome || "Não especificado."}"
+      - **Tags:** "${postDetails.tags || "Nenhuma."}"
 
-        Uma denúncia é VÁLIDA SOMENTE SE o texto descrever CLARAMENTE um problema real que viole as regras da comunidade, tais como:
-        - O conteúdo da imagem é explícito (nudez, violência, discurso de ódio).
-        - O post é claramente uma publicidade, promoção de loja ou spam comercial.
-        - O conteúdo não tem NENHUMA relação com turismo, viagens ou descoberta de locais (ex: uma selfie em casa, foto de um prato de comida sem contexto, um meme).
+      ### INFORMAÇÕES DA DENÚNCIA
+      - **Categoria da Denúncia:** "${category}"
 
-        Analise a IMAGEM e o TEXTO DA DENÚNCIA abaixo. Seja crítico.
+      ### SUA TAREFA
+      Analise a IMAGEM e as INFORMAÇÕES DO POST em conjunto, focando estritamente na CATEGORIA DA DENÚNCIA.
 
-        Texto da denúncia: "${reason}"
-        
-        Responda APENAS com um objeto JSON com a seguinte estrutura:
-        {
-          "isValid": boolean,
-          "reasoning": "explique em português e numa frase curta e direta o porquê da sua decisão."
-        }
+      - Se a categoria for "Conteúdo Explícito, Violento ou de Ódio", foque na IMAGEM. A legenda ou tags podem conter discurso de ódio.
+      - Se a categoria for "Spam ou Publicidade", analise a IMAGEM e a LEGENDA em busca de linguagem de vendas, preços, ou links promocionais.
+      - Se a categoria for "Não se trata de um Ponto Turístico", use a IMAGEM, a LEGENDA e o NOME DO LOCAL para determinar se o conteúdo tem relevância turística. Uma legenda pode dar contexto a uma imagem aparentemente aleatória.
+      - Se a categoria for "Informação Falsa ou Enganosa", compare a IMAGEM com a LEGENDA e o NOME DO LOCAL. Procure por contradições óbvias (ex: foto de uma praia com nome do local "Centro da Cidade").
+
+      Com base na sua análise completa, determine se a denúncia é VÁLIDA ou INVÁLIDA.
+
+      Responda APENAS com um objeto JSON com a seguinte estrutura:
+      {
+        "isValid": boolean,
+        "reasoning": "explique em português e de forma curta o porquê da sua decisão, usando as informações do post e da denúncia para justificar."
+      }
     `;
 
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-pro-vision:generateContent?key=${GEMINI_API_KEY}`;
 
     const payload = {
       contents: [
@@ -1223,14 +1241,12 @@ app.post("/validate-report", async (req, res) => {
     if (!responseText) {
       throw new Error("A IA não devolveu uma resposta válida.");
     }
-
     const jsonResponse = JSON.parse(
       responseText
         .replace(/```json/g, "")
         .replace(/```/g, "")
         .trim()
     );
-
     res.json(jsonResponse);
   } catch (e) {
     console.error(
@@ -1244,12 +1260,23 @@ app.post("/validate-report", async (req, res) => {
 });
 
 app.post("/reports", async (req, res) => {
-  const { postId, reporterId, reason } = req.body;
-  if (!reason?.trim())
-    return res.status(400).json({ message: "Motivo obrigatório" });
+  const { postId, reporterId, category } = req.body;
+  if (!category?.trim())
+    return res.status(400).json({ message: "Categoria obrigatória" });
 
   try {
     const pool = await poolPromise;
+    const existingReport = await pool
+      .request()
+      .input("pid", sql.UniqueIdentifier, postId)
+      .input("uid", sql.UniqueIdentifier, reporterId)
+      .query(
+        "SELECT 1 FROM dbo.Reports WHERE postId = @pid AND reporterId = @uid"
+      );
+
+    if (existingReport.recordset.length > 0) {
+      return res.status(409).json({ message: "Você já denunciou este post." });
+    }
 
     const { recordset: post } = await pool
       .request()
@@ -1264,10 +1291,11 @@ app.post("/reports", async (req, res) => {
       .input("rid", sql.UniqueIdentifier, uuidv4())
       .input("pid", sql.UniqueIdentifier, postId)
       .input("uid", sql.UniqueIdentifier, reporterId)
-      .input("reason", sql.NVarChar, reason.slice(0, 500))
+      .input("reason", sql.NVarChar, category.slice(0, 500))
       .query(
         "INSERT dbo.Reports(id,postId,reporterId,reason) VALUES (@rid,@pid,@uid,@reason)"
       );
+
     res.json({ ok: true });
 
     setImmediate(async () => {
