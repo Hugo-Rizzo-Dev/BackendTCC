@@ -651,47 +651,53 @@ app.get("/posts", async (req, res) => {
     const request = pool.request().input("uid", sql.UniqueIdentifier, viewer);
 
     let query = `
-          WITH PostsData AS (
-              SELECT
-                  p.id, p.legenda, p.createdAt, p.latitude, p.longitude,
-                  p.localNome, p.descricaoIA,
-                  p.isPontoTuristico, p.tentativasVotacao,
-                  u.id AS autorId, u.nome, u.sobrenome,
-                  CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
-                  (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
-                  (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id) AS comments,
-                  CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl WHERE pl.postId = p.id AND pl.usuarioId = @uid)
-                        THEN 1 ELSE 0 END AS curtiu,
-                  v.id as votacaoId,
-                  v.terminaEm as votacaoTerminaEm,
-                  (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 1) AS votosSim,
-                  (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 0) AS votosNao,
-                  CASE WHEN EXISTS (SELECT 1 FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.usuarioId = @uid)
-                        THEN 1 ELSE 0 END AS jaVotou,
-                  CASE 
-                      WHEN EXISTS (SELECT 1 FROM dbo.Seguidores s WHERE s.seguidorId = @uid AND s.seguidoId = u.id) 
-                      THEN 1 
-                      ELSE 0 
-                  END AS isFollowing
-                  ${
-                    lat && lng
-                      ? `,
-                  (6371 * acos(
-                      cos(radians(@userLat)) * cos(radians(p.latitude)) *
-                      cos(radians(p.longitude) - radians(@userLng)) +
-                      sin(radians(@userLat)) * sin(radians(p.latitude))
-                  )) AS distancia_km`
-                      : ""
-                  }
-              FROM dbo.Posts p
-              JOIN dbo.Usuarios u ON u.id = p.usuarioId
-              LEFT JOIN dbo.Votacoes v ON v.postId = p.id AND v.status = 'ativa' AND v.terminaEm > GETUTCDATE()
-          )
-          SELECT *
-          FROM PostsData
-          ${lat && lng ? "WHERE distancia_km <= 300" : ""}
-          ORDER BY isFollowing DESC, createdAt DESC
-      `;
+          WITH PostsData AS (
+              SELECT
+                  p.id, p.legenda, p.createdAt, p.latitude, p.longitude,
+                  p.localNome, p.descricaoIA,
+                  p.isPontoTuristico, p.tentativasVotacao,
+                  u.id AS autorId, u.nome, u.sobrenome,
+                  CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
+                  (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
+                  (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id) AS comments,
+                  CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl WHERE pl.postId = p.id AND pl.usuarioId = @uid)
+                        THEN 1 ELSE 0 END AS curtiu,
+                  v.id as votacaoId,
+                  v.terminaEm as votacaoTerminaEm,
+                  (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 1) AS votosSim,
+                  (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 0) AS votosNao,
+                  CASE WHEN EXISTS (SELECT 1 FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.usuarioId = @uid)
+                        THEN 1 ELSE 0 END AS jaVotou,
+                  CASE 
+                      WHEN EXISTS (SELECT 1 FROM dbo.Seguidores s WHERE s.seguidorId = @uid AND s.seguidoId = u.id) 
+                      THEN 1 
+                      ELSE 0 
+                  END AS isFollowing
+                  ${
+      lat && lng
+        ? `,
+                  (6371 * acos(
+                      cos(radians(@userLat)) * cos(radians(p.latitude)) *
+                      cos(radians(p.longitude) - radians(@userLng)) +
+                      sin(radians(@userLat)) * sin(radians(p.latitude))
+                  )) AS distancia_km`
+        : ""
+    }
+              FROM dbo.Posts p
+              JOIN dbo.Usuarios u ON u.id = p.usuarioId
+              LEFT JOIN dbo.Votacoes v ON v.postId = p.id AND v.status = 'ativa' AND v.terminaEm > GETUTCDATE()
+          )
+          SELECT *
+          FROM PostsData
+          ${lat && lng ? "WHERE distancia_km <= 300" : ""}
+          ORDER BY 
+            CASE 
+                WHEN isFollowing = 1 AND createdAt >= DATEADD(hour, -24, GETUTCDATE()) 
+                THEN 0
+                ELSE 1
+            END,
+            createdAt DESC
+      `;
 
     if (lat && lng) {
       request.input("userLat", sql.Float, parseFloat(lat));
@@ -710,7 +716,6 @@ app.get("/posts", async (req, res) => {
     res.status(500).json({ message: "Erro interno" });
   }
 });
-
 // Rota para o autor do post iniciar uma votação
 app.post("/posts/:postId/iniciar-votacao", async (req, res) => {
   const { postId } = req.params;
