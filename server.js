@@ -648,6 +648,7 @@ app.get("/posts", async (req, res) => {
 
   try {
     const pool = await poolPromise;
+    await fecharVotacoesExpiradas(pool);
     const request = pool.request().input("uid", sql.UniqueIdentifier, viewer);
 
     let query = `
@@ -797,7 +798,7 @@ app.post("/posts/:postId/iniciar-votacao", async (req, res) => {
 // Rota para um usuário votar
 app.post("/votacoes/:votacaoId/votar", async (req, res) => {
   const { votacaoId } = req.params;
-  const { voto } = req.body; // true para 'Sim', false para 'Não'
+  const { voto } = req.body;
   const { userId } = req;
 
   if (voto === undefined) {
@@ -811,9 +812,6 @@ app.post("/votacoes/:votacaoId/votar", async (req, res) => {
 
   try {
     const pool = await poolPromise;
-
-    await fecharVotacoesExpiradas(pool);
-
     const votacaoResult = await pool
       .request()
       .input("votacaoId", sql.UniqueIdentifier, votacaoId)
@@ -854,12 +852,19 @@ app.post("/votacoes/:votacaoId/votar", async (req, res) => {
 });
 
 async function fecharVotacoesExpiradas(pool) {
-  console.log("Verificando votações expiradas...");
   const votacoesExpiradas = await pool
     .request()
     .query(
       "SELECT id, postId FROM dbo.Votacoes WHERE terminaEm < GETUTCDATE() AND status = 'ativa'"
     );
+
+  if (votacoesExpiradas.recordset.length > 0) {
+    console.log(
+      `[VOTACAO] Encontradas ${votacoesExpiradas.recordset.length} votações expiradas.`
+    );
+  } else {
+    return;
+  }
 
   for (const votacao of votacoesExpiradas.recordset) {
     const votosResult = await pool
@@ -869,23 +874,41 @@ async function fecharVotacoesExpiradas(pool) {
         "SELECT SUM(CAST(voto AS INT)) as votosSim, COUNT(*) as totalVotos FROM dbo.VotosUsuarios WHERE votacaoId = @votacaoId"
       );
 
-    const { votosSim, totalVotos } = votosResult.recordset[0];
-    const resultado =
-      (votosSim || 0) > (totalVotos || 0) / 2 ? "aprovada" : "reprovada";
+    const vSim = votosResult.recordset[0].votosSim || 0;
+    const totalVotos = votosResult.recordset[0].totalVotos || 0;
+    const vNao = totalVotos - vSim;
 
-    await pool
-      .request()
-      .input("votacaoId", sql.UniqueIdentifier, votacao.id)
-      .input("resultado", sql.NVarChar, resultado)
-      .query(
-        "UPDATE dbo.Votacoes SET status = 'concluida', resultado = @resultado WHERE id = @votacaoId"
-      );
+    const resultado = vSim > vNao ? "aprovada" : "reprovada";
 
-    if (resultado === "aprovada") {
-      await pool
-        .request()
+    const transaction = new sql.Transaction(pool);
+    try {
+      await transaction.begin();
+      await new sql.Request(transaction)
+        .input("votacaoId", sql.UniqueIdentifier, votacao.id)
+        .input("resultado", sql.NVarChar, resultado)
+        .query(
+          "UPDATE dbo.Votacoes SET status = 'concluida', resultado = @resultado WHERE id = @votacaoId"
+        );
+
+      let updatePostSets = "votacaoAtivaId = NULL";
+      if (resultado === "aprovada") {
+        updatePostSets += ", isPontoTuristico = 1";
+      }
+
+      await new sql.Request(transaction)
         .input("postId", sql.UniqueIdentifier, votacao.postId)
-        .query("UPDATE dbo.Posts SET isPontoTuristico = 1 WHERE id = @postId");
+        .query(`UPDATE dbo.Posts SET ${updatePostSets} WHERE id = @postId`);
+
+      await transaction.commit();
+      console.log(
+        `[VOTACAO] Votação ${votacao.id} fechada. Resultado: ${resultado} (Sim: ${vSim}, Não: ${vNao})`
+      );
+    } catch (err) {
+      await transaction.rollback();
+      console.error(
+        `[VOTACAO] ERRO ao fechar votação ${votacao.id}. Rollback realizado.`,
+        err
+      );
     }
   }
 }
