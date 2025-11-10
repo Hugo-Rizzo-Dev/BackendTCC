@@ -7,7 +7,6 @@ const bcrypt = require("bcrypt");
 const axios = require("axios");
 const multer = require("multer");
 const exifr = require("exifr");
-const nodemailer = require("nodemailer");
 const { v4: uuidv4 } = require("uuid");
 const { poolPromise, sql } = require("./db");
 const { gerarDescricaoIA } = require("./gemini");
@@ -15,24 +14,9 @@ const { gerarDescricaoIA } = require("./gemini");
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.office365.com",
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.REPORT_SMTP_USER,
-    pass: process.env.REPORT_SMTP_PASS,
-  },
-});
-
-transporter.verify(function (error, success) {
-  if (error) {
-    console.error("❌ ERRO NO TRANSPORTER (GMAIL):", error.message);
-    console.log("Verifique as variaveis");
-  } else {
-    console.log("✅ Servidor de e-mail do Gmail pronto para enviar.");
-  }
-});
+const sgMail = require("@sendgrid/mail");
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+sgMail.setApiKey(SENDGRID_API_KEY);
 
 const app = express();
 app.use(cors());
@@ -420,18 +404,24 @@ app.post("/forgot-password", async (req, res) => {
         WHERE id = @id
       `);
 
-    await transporter.sendMail({
-      from: `"App Turismo" <${process.env.REPORT_SMTP_USER}>`,
+    const msg = {
       to: email,
+      from: process.env.REPORT_SMTP_USER,
       subject: "Seu Código de Recuperação de Senha - App Turismo",
       html: `
-        <p>Olá,</p>
-        <p>Use o código abaixo para redefinir sua senha no App Turismo.</p>
-        <h2 style="text-align:center; letter-spacing: 5px;">${resetCode}</h2>
-        <p>Este código é válido por 10 minutos.</p>
-        <p>Se você não solicitou isso, ignore este e-mail.</p>
-      `,
-    });
+            <p>Olá,</p>
+            <p>Use o código abaixo para redefinir sua senha no App Turismo.</p>
+            <h2 style="text-align:center; letter-spacing: 5px;">${resetCode}</h2>
+            <p>Este código é válido por 10 minutos.</p>
+            <p>Se você não solicitou isso, ignore este e-mail.</p>
+        `,
+    };
+
+    try {
+      await sgMail.send(msg);
+    } catch (sendError) {
+      console.error("Erro ao enviar email com SendGrid:", sendError.message);
+    }
 
     res.json({
       message: "Um código de recuperação foi enviado para seu email.",
@@ -1354,26 +1344,30 @@ app.post("/reports", async (req, res) => {
 
     setImmediate(async () => {
       try {
-        console.log("[REPORT] Sending moderation email...");
-        await Promise.race([
-          transporter.sendMail({
-            from: `"Denúncias AppTurismo" <${process.env.REPORT_SMTP_USER}>`,
-            to: process.env.REPORT_MAIL,
-            subject: "Nova denúncia de post",
-            text:
-              `Post ID: ${postId}\nAutor do post: ${post[0].usuarioId}\n` +
-              `Denunciante: ${reporterId}\n\nMotivo informado:\n${reason}`,
-            attachments: [
-              { filename: `${postId}.jpg`, content: post[0].imagemData },
-            ],
-          }),
-          new Promise((_, rej) =>
-            setTimeout(() => rej(new Error("SMTP timeout (5s)")), 5000)
-          ),
-        ]);
+        console.log("[REPORT] Sending moderation email (via SendGrid)...");
+        const imagemBase64 = post[0].imagemData.toString("base64");
+        const msg = {
+          to: process.env.REPORT_MAIL,
+          from: process.env.REPORT_SMTP_USER,
+          subject: "Nova denúncia de post - AppTurismo",
+          text:
+            `Post ID: ${postId}\nAutor do post: ${post[0].usuarioId}\n` +
+            `Denunciante: ${reporterId}\n\nMotivo informado:\n${category}`,
+
+          attachments: [
+            {
+              content: imagemBase64,
+              filename: `${postId}.jpg`,
+              type: "image/jpeg",
+              disposition: "attachment",
+            },
+          ],
+        };
+
+        await sgMail.send(msg);
         console.log("[REPORT] Email sent successfully.");
       } catch (err) {
-        console.error("[REPORT] Email send failed:", err.message);
+        console.error("[REPORT] Email send failed (SendGrid):", err);
       }
     });
   } catch (e) {
