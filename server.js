@@ -976,24 +976,39 @@ async function fecharVotacoesExpiradas(pool) {
 app.get("/users/:id/posts", async (req, res) => {
   const viewer = req.userId ?? req.params.id;
   const pool = await poolPromise;
+
   const r = await pool
     .request()
     .input("uid", sql.UniqueIdentifier, viewer)
     .input("userId", sql.UniqueIdentifier, req.params.id).query(`
-            SELECT  p.id, p.legenda, p.descricaoIA, p.createdAt, p.latitude, p.longitude, p.localNome,
-                    p.isPontoTuristico, p.tentativasVotacao,
-                    u.id AS autorId, u.nome, u.sobrenome,
-                    CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
-                    (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
-                    (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id)  AS comments,
-                    CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl
-                                        WHERE pl.postId = p.id AND pl.usuarioId = @uid)
-                        THEN 1 ELSE 0 END AS curtiu
-            FROM dbo.Posts p
-            JOIN dbo.Usuarios u ON u.id = p.usuarioId
-            WHERE p.usuarioId = @userId
-            ORDER BY p.createdAt DESC
-        `);
+      SELECT  
+        p.id, p.legenda, p.descricaoIA, p.createdAt, p.latitude, p.longitude, p.localNome,
+        p.isPontoTuristico, p.tentativasVotacao,
+
+        -- Author info
+        u.id AS autorId, u.nome, u.sobrenome,
+        CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
+
+        -- Likes & comments
+        (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
+        (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id) AS comments,
+        CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl WHERE pl.postId = p.id AND pl.usuarioId = @uid)
+          THEN 1 ELSE 0 END AS curtiu,
+
+        -- Voting data (added to match /posts endpoint)
+        v.id AS votacaoId,
+        v.terminaEm AS votacaoTerminaEm,
+        (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 1) AS votosSim,
+        (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 0) AS votosNao,
+        CASE WHEN EXISTS (SELECT 1 FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.usuarioId = @uid)
+          THEN 1 ELSE 0 END AS jaVotou
+
+      FROM dbo.Posts p
+      JOIN dbo.Usuarios u ON u.id = p.usuarioId
+      LEFT JOIN dbo.Votacoes v ON v.postId = p.id AND v.status = 'ativa' AND v.terminaEm > GETUTCDATE()
+      WHERE p.usuarioId = @userId
+      ORDER BY p.createdAt DESC
+    `);
 
   res.json(
     r.recordset.map((p) => ({
