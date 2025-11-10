@@ -17,8 +17,8 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
+  port: 587,
+  secure: false,
   auth: {
     user: process.env.REPORT_SMTP_USER,
     pass: process.env.REPORT_SMTP_PASS,
