@@ -980,7 +980,8 @@ app.get("/users/:id/posts", async (req, res) => {
     .request()
     .input("uid", sql.UniqueIdentifier, viewer)
     .input("userId", sql.UniqueIdentifier, req.params.id).query(`
-            SELECT  p.id, p.legenda, p.createdAt, p.latitude, p.longitude,
+            SELECT  p.id, p.legenda, p.descricaoIA, p.createdAt, p.latitude, p.longitude, p.localNome,
+                    p.isPontoTuristico, p.tentativasVotacao,
                     u.id AS autorId, u.nome, u.sobrenome,
                     CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
                     (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
