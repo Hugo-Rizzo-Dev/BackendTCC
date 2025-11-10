@@ -726,6 +726,57 @@ app.get("/posts", async (req, res) => {
     res.status(500).json({ message: "Erro interno" });
   }
 });
+
+app.get("/posts/:id", async (req, res) => {
+  const viewer = req.userId ?? "00000000-0000-0000-0000-000000000000";
+  try {
+    const pool = await poolPromise;
+    const request = pool
+      .request()
+      .input("uid", sql.UniqueIdentifier, viewer)
+      .input("postId", sql.UniqueIdentifier, req.params.id);
+
+    let query = `
+            SELECT TOP 1
+            p.id, p.legenda, p.createdAt, p.latitude, p.longitude,
+            p.localNome, p.descricaoIA,
+            p.isPontoTuristico, p.tentativasVotacao,
+            u.id AS autorId, u.nome, u.sobrenome,
+            CASE WHEN u.fotoPerfilData IS NULL THEN 0 ELSE 1 END AS hasAvatar,
+            (SELECT COUNT(*) FROM dbo.PostLikes pl WHERE pl.postId = p.id) AS likes,
+            (SELECT COUNT(*) FROM dbo.Comentarios c WHERE c.postId = p.id) AS comments,
+            CASE WHEN EXISTS (SELECT 1 FROM dbo.PostLikes pl WHERE pl.postId = p.id AND pl.usuarioId = @uid)
+            THEN 1 ELSE 0 END AS curtiu,
+            v.id as votacaoId,
+            v.terminaEm as votacaoTerminaEm,
+            (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 1) AS votosSim,
+            (SELECT COUNT(vu.voto) FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.voto = 0) AS votosNao,
+            CASE WHEN EXISTS (SELECT 1 FROM dbo.VotosUsuarios vu WHERE vu.votacaoId = v.id AND vu.usuarioId = @uid)
+            THEN 1 ELSE 0 END AS jaVotou
+            FROM dbo.Posts p
+            JOIN dbo.Usuarios u ON u.id = p.usuarioId
+            LEFT JOIN dbo.Votacoes v ON v.postId = p.id AND v.status = 'ativa' AND v.terminaEm > GETUTCDATE()
+            WHERE p.id = @postId
+        `;
+
+    const r = await request.query(query);
+
+    if (!r.recordset.length) {
+      return res.status(404).json({ message: "Post não encontrado" });
+    }
+
+    const p = r.recordset[0];
+    const post = {
+      ...p,
+      fotoPerfil: buildAvatarUrl(req, p.autorId, p.hasAvatar),
+    };
+    res.json(post);
+  } catch (err) {
+    console.error("Erro ao buscar post individual:", err);
+    res.status(500).json({ message: "Erro interno" });
+  }
+});
+
 // Rota para o autor do post iniciar uma votação
 app.post("/posts/:postId/iniciar-votacao", async (req, res) => {
   const { postId } = req.params;
