@@ -15,6 +15,25 @@ const { gerarDescricaoIA } = require("./gemini");
 const jwt = require("jsonwebtoken");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
+  auth: {
+    user: process.env.REPORT_SMTP_USER,
+    pass: process.env.REPORT_SMTP_PASS,
+  },
+});
+
+transporter.verify(function (error, success) {
+  if (error) {
+    console.error("❌ ERRO NO TRANSPORTER (GMAIL):", error.message);
+    console.log("Verifique as variaveis");
+  } else {
+    console.log("✅ Servidor de e-mail do Gmail pronto para enviar.");
+  }
+});
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -1157,16 +1176,6 @@ app.get("/users/:id/following/count", async (req, res) => {
 });
 
 /* ---------- DENUNCIAS ----------------------------------------------- */
-const transporter = nodemailer.createTransport({
-  host: process.env.REPORT_SMTP_HOST,
-  port: Number(process.env.REPORT_SMTP_PORT),
-  secure: process.env.REPORT_SMTP_SECURE === "true",
-  auth: {
-    user: process.env.REPORT_SMTP_USER,
-    pass: process.env.REPORT_SMTP_PASS,
-  },
-});
-
 app.post("/validate-report", async (req, res) => {
   const { postId, category } = req.body;
 
