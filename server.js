@@ -328,6 +328,21 @@ app.get("/users/:id/avatar", async (req, res) => {
   res.set("Content-Type", "image/jpeg").send(bin);
 });
 
+app.delete("/users/:id/avatar", async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    await pool
+      .request()
+      .input("id", sql.UniqueIdentifier, req.params.id)
+      .query("UPDATE dbo.Usuarios SET fotoPerfilData = NULL WHERE id = @id");
+
+    res.json({ message: "Avatar removido" });
+  } catch (err) {
+    console.error("Erro ao remover avatar:", err);
+    res.status(500).json({ message: "Erro interno" });
+  }
+});
+
 app.post("/login", async (req, res) => {
   const { email, senha } = req.body;
   if (!email || !senha)
