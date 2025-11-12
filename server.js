@@ -715,13 +715,7 @@ app.get("/posts", async (req, res) => {
       SELECT *
       FROM PostsData
       ${lat && lng ? "WHERE distancia_km <= 300" : ""}
-          ORDER BY 
-            CASE 
-                WHEN isFollowing = 1 AND createdAt >= DATEADD(hour, -24, GETUTCDATE()) 
-                THEN 0
-                ELSE 1
-            END,
-            createdAt DESC
+          ORDER BY createdAt DESC
  `;
 
     if (lat && lng) {
