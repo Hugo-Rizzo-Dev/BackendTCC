@@ -531,6 +531,50 @@ app.post("/reset-password", async (req, res) => {
   }
 });
 
+app.post("/change-password", async (req, res) => {
+  const { userId, senhaAtual, novaSenha } = req.body;
+
+  if (!userId || !senhaAtual || !novaSenha) {
+    return res.status(400).json({ message: "Dados insuficientes" });
+  }
+
+  try {
+    const pool = await poolPromise;
+
+    const result = await pool
+      .request()
+      .input("id", sql.UniqueIdentifier, userId)
+      .query(`SELECT senhaHash FROM dbo.Usuarios WHERE id = @id`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: "Usuário não encontrado" });
+    }
+
+    const senhaHashAtual = result.recordset[0].senhaHash;
+
+    const senhaValida = await bcrypt.compare(senhaAtual, senhaHashAtual);
+    if (!senhaValida) {
+      return res.status(401).json({ message: "Senha atual incorreta" });
+    }
+
+    const novaHash = await bcrypt.hash(novaSenha, 10);
+
+    await pool
+      .request()
+      .input("id", sql.UniqueIdentifier, userId)
+      .input("novaSenha", sql.NVarChar, novaHash).query(`
+        UPDATE dbo.Usuarios 
+        SET senhaHash = @novaSenha
+        WHERE id = @id
+      `);
+
+    res.json({ message: "Senha alterada com sucesso!" });
+  } catch (err) {
+    console.error("Erro /change-password:", err);
+    res.status(500).json({ message: "Erro interno" });
+  }
+});
+
 // Verificar imagem
 app.post("/moderate-image", upload.single("foto"), async (req, res) => {
   try {
